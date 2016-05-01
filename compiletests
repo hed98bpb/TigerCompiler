@@ -1,0 +1,30 @@
+#!/bin/bash --norc
+
+TEST_DIR=../testcases
+OUT_DIR=out
+EXPECT_DIR=expected
+
+if [ ! -e "$OUT_DIR" ]; then
+    mkdir "$OUT_DIR"
+fi
+
+export TIGERC_NOAS="." # prevent tigerc from running as/gcc
+
+for n in `cat filessucceeding`; do
+    ./tigerc $n
+    echo "----- $n -----"
+    diff {$EXPECT_DIR,$OUT_DIR}/$n.s
+done
+
+for n in `cat filesfailing`; do
+    ./tigerc $n >$OUT_DIR/$n.error
+    if [ "$?" -ne "0" ]; then
+        echo "----- $n -----"
+        diff {$EXPECT_DIR,$OUT_DIR}/$n.error
+    else
+        echo "*** ERROR NOT DETECTED ***"
+    fi
+done
+
+unset TIGERC_NOAS
+

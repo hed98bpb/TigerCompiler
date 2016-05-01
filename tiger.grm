@@ -1,0 +1,294 @@
+structure A = Absyn
+structure S = Symbol
+
+(* Convenience functions for creating abstract syntax tree *)
+
+datatype lvaluePartSpec = Field of S.symbol
+                        | Subscript of A.exp
+
+fun makeLvaluePartSpec (v, pos, l::r) =
+  (case l
+    of Field idsym =>
+       makeLvaluePartSpec (A.FieldVar (v, idsym, pos), pos, r)
+     | Subscript exp =>
+       makeLvaluePartSpec (A.SubscriptVar (v, exp, pos), pos,r))
+  | makeLvaluePartSpec (v, _, nil) = v
+
+fun makeBinop (e1, bop, e2, p) =
+    A.OpExp  { left = e1
+             , oper = bop
+             , right = e2
+             , pos = p}
+
+fun makeIf (et, en, el, p) =
+    A.IfExp  { test = et
+             , thn = en
+             , els = el
+             , pos = p}
+
+fun makeVarDec (idsym, ty, e, p) =
+             { name = idsym
+             , escape = ref true
+             , typ = ty
+             , init = e
+             , pos = p} : A.vardecldata
+
+fun makeFundecl (idsym, ps, rty, e, p) =
+             { name = idsym
+             , params = ps
+             , result = rty
+             , body = e
+             , pos = p} : A.fundecldata
+
+fun makeTyDec (idsym, t, p) =
+	     { name = idsym
+	     , ty = t
+	     , pos = p} : A.tydecldata
+
+fun makeForExp (idsym, el, eh, eb, p) =
+    A.ForExp { var = idsym
+	     , escape = ref true
+	     , lo = el
+	     , hi = eh
+	     , body = eb
+	     , pos = p}
+
+fun makeWhileExp (et, eb, p) =
+    A.WhileExp { test = et
+	       , body = eb
+	       , pos = p}
+
+fun makeLetExp (decs, eb, p) =
+    A.LetExp { decls = decs
+	     , body = eb
+	     , pos = p}
+
+fun makeCallExp (fnc, ags, p) =
+    A.CallExp { func = fnc
+	      , args = ags
+	      , pos = p}
+
+fun makeArExp (ty, sz, ini, p) =
+    A.ArrayExp { typ = ty
+	       , size = sz
+	       , init = ini
+	       , pos = p}
+
+fun makeAssign (idsym, e, p) =
+    A.AssignExp { var = idsym
+		, exp = e
+		, pos = p}
+
+fun makeRecExp (flds, ty, p) =
+    A.RecordExp { fields = flds
+		, typ = ty
+		, pos = p}
+
+fun makeFieldData (idsym, ty, p) =
+                { name = idsym
+		, escape = ref true
+		, typ = ty
+		, pos = p} : A.fielddata
+
+
+
+%%
+%term
+    EOF
+  | ID of string
+  | INT of int | STRING of string
+  | COMMA | COLON | SEMICOLON | LPAREN | RPAREN | LBRACK | RBRACK
+  | LBRACE | RBRACE | DOT
+  | ARRAY | IF | THEN | ELSE | WHILE | FOR | TO | DO | LET | IN | END | OF
+  | PLUS | MINUS | UMINUS | TIMES | DIVIDE | EQ | NEQ | LT | LE | GT | GE | CARET
+  | AND | OR | ASSIGN
+  | BREAK | NIL
+  | FUNCTION | VAR | TYPE
+  | DEC
+
+
+
+
+(* Non-terimnals and their type definitions*)
+
+%nonterm program of A.exp
+       | exp of A.exp
+       | exps of (A.exp * pos) list
+       | expTail of (A.exp * pos) list
+       | seqexp of (A.exp * pos) list
+       | seqexpTail of (A.exp * pos) list
+       | recfields of (S.symbol * A.exp * pos) list
+       | recTail of (S.symbol * A.exp * pos) list
+       | decl of A.decl
+       | decls of A.decl list
+       | tydecl of A.tydecldata
+       | tydecls of A.tydecldata list
+       | ty of A.ty
+       | tyfields of A.fielddata list
+       | tyTail of A.fielddata list
+       | vardecl of A.vardecldata
+       | fundecl of A.fundecldata
+       | fundecls of A.fundecldata list
+       | lvalue of A.var
+       | lvalue_p of lvaluePartSpec list
+
+%pos int
+%verbose
+%start program
+%eop EOF
+%noshift EOF
+
+%name Tiger
+
+%keyword WHILE FOR TO BREAK LET IN END FUNCTION
+         VAR TYPE ARRAY IF THEN ELSE DO OF NIL
+
+
+%prefer THEN IF ELSE LPAREN RPAREN
+
+
+%value ID ("bogus")
+%value INT (1)
+%value STRING ("")
+
+(* Precedence and associativity specifciation *)
+
+
+%right      ELSE
+%nonassoc   FUNCTION VAR TYPE THEN DO OF ASSIGN
+%left       AND OR
+%nonassoc   NEQ GT LT GE LE EQ
+%left       PLUS MINUS
+%left       TIMES DIVIDE
+%right      UMINUS DEC
+%right      CARET
+
+
+
+
+%%
+
+(* Top level constructs *)
+
+(* Program *)
+program   : exp                                                (exp)
+
+(* Expressions *)
+exp       : INT                                                (A.IntExp INT)
+   |        NIL                                                (A.NilExp)
+   |        STRING                                             (A.StringExp (STRING, STRINGleft))
+   |        lvalue                                             (A.VarExp(lvalue))
+   |        lvalue ASSIGN exp                                  (makeAssign(lvalue,exp,lvalueleft)) (*Rule 5*)
+   |        ID LBRACK exp RBRACK OF exp                        (makeArExp(S.symbol(ID),exp1,exp2,IDleft))
+   |        IF exp THEN exp ELSE exp                           (makeIf(exp1,exp2,SOME exp3,IFleft))
+   |        IF exp THEN exp            %prec ELSE              (makeIf(exp1,exp2,NONE,IFleft))
+   |        WHILE exp DO exp                                   (makeWhileExp(exp1,exp2,WHILEleft))
+   |        FOR ID ASSIGN exp TO exp DO exp                    (makeForExp(S.symbol(ID),exp1,exp2,exp3,FORleft)) (*Rule 10*)
+   |        BREAK                                              (A.BreakExp BREAKleft)
+   |        LET decls IN seqexp END                            (makeLetExp(decls,A.SeqExp(seqexp),LETleft))
+   |        LPAREN seqexp RPAREN                               (A.SeqExp(seqexp))
+   |        ID LBRACE recfields RBRACE                         (makeRecExp(recfields, S.symbol(ID), IDleft))
+   |        ID LPAREN exps RPAREN                              (makeCallExp(S.symbol(ID),exps,IDleft)) (*Rule 15 *)
+(* Binary operators *)
+   |        exp OR exp                                         (makeIf(exp1,A.IntExp(1),SOME exp2,exp1left))
+   |        exp AND exp                                        (makeIf(exp1,exp2,SOME (A.IntExp(0)),exp1left))
+   |        exp EQ exp                                         (makeBinop(exp1,A.EqOp,exp2,exp1left))
+   |        exp LE exp                                         (makeBinop(exp1,A.LeOp,exp2,exp1left))
+   |        exp GE exp                                         (makeBinop(exp1,A.GeOp,exp2,exp1left)) (*Rule 20*)
+   |        exp LT exp                                         (makeBinop(exp1,A.LtOp,exp2,exp1left))
+   |        exp GT exp                                         (makeBinop(exp1,A.GtOp,exp2,exp1left))
+   |        exp NEQ exp                                        (makeBinop(exp1,A.NeqOp,exp2,exp1left))
+   |        exp MINUS exp                                      (makeBinop(exp1,A.MinusOp,exp2,exp1left))
+   |        exp PLUS exp                                       (makeBinop(exp1,A.PlusOp,exp2,exp1left)) (*Rule 25*)
+   |        exp DIVIDE exp                                     (makeBinop(exp1,A.DivideOp,exp2,exp1left))
+   |        exp TIMES exp                                      (makeBinop(exp1,A.TimesOp,exp2,exp1left))
+   |        exp CARET exp                                      (makeBinop(exp1,A.ExponentOp,exp2,exp1left))
+   |        MINUS exp  %prec UMINUS                            (makeBinop(A.IntExp(0),A.MinusOp,exp,MINUSleft))
+
+
+exps      :                                                    ([]) (*Rule 30*)
+   |        exp                                                ([(exp, expleft)])
+   |        exp COMMA expTail                                  ((exp, expleft)::expTail)
+
+expTail   : exp                                                ([(exp, expleft)])
+   |        exp COMMA expTail                                  ((exp, expleft)::expTail)
+
+seqexp    :                                                    ([])
+   |        exp                                                ([(exp,expleft)])
+   |        exp SEMICOLON seqexpTail                           ((exp,expleft)::seqexpTail) (*Rule 35*)
+
+seqexpTail: exp                                                ([(exp, expleft)])
+   |        exp SEMICOLON seqexpTail                           ((exp, expleft)::seqexpTail)
+
+(* Record fields *)
+recfields :                                                    ([])
+   |        ID EQ exp                                          ([(S.symbol(ID),exp, expleft)])
+   |        ID EQ exp COMMA recTail                            (recTail @ [(S.symbol(ID),exp, expleft)])
+
+recTail :   ID EQ exp                                          ([(S.symbol(ID),exp, expleft)])
+|           ID EQ exp COMMA recTail                            (recTail @ [(S.symbol(ID),exp, expleft)])
+
+(* Declarations *)
+decl      : tydecls  (*%prec DEC*)                             (A.TypeDec(tydecls))
+   |        vardecl                                            (A.VarDec(vardecl)) (*Rule 40*)
+   |        fundecls (*%prec DEC    *)                         (A.FunctionDec(fundecls))
+
+decls     :                                                    ([])
+   |        decl decls                                         ([decl] @ decls)
+
+(* Type declarations *)
+tydecl    : TYPE ID EQ ty                                      (makeTyDec(S.symbol(ID),ty,TYPEleft))
+
+
+tydecls   : tydecl                                             ([tydecl]) (*Rule 45*)
+   |        tydecls tydecl                                     (tydecl::tydecls)
+
+
+ty        : ID                                                 (A.NameTy(S.symbol(ID),IDleft))
+   |        LBRACE tyfields RBRACE                             (A.RecordTy(tyfields))
+   |        ARRAY OF ID                                        (A.ArrayTy(S.symbol(ID),IDleft))
+
+tyfields  :                                                    (nil) (*Rule 50*)
+   |        ID COLON ID                                        ([makeFieldData(S.symbol(ID1), (S.symbol(ID2),ID2left),ID1left)])
+   |        ID COLON ID COMMA tyTail                           (makeFieldData(S.symbol(ID1),
+                                      									       (S.symbol(ID2),ID2left),
+                                      									       ID1left) :: tyTail)
+
+tyTail    : ID COLON ID                                        ([makeFieldData(S.symbol(ID1), (S.symbol(ID2),ID2left),ID1left)])
+   |        ID COLON ID COMMA tyTail                           (makeFieldData(S.symbol(ID1),
+                                      									       (S.symbol(ID2),ID2left),
+                                      									       ID1left) :: tyTail)
+
+(* Variable declarations *)
+vardecl   : VAR ID ASSIGN exp                                  (makeVarDec(S.symbol(ID),NONE,exp,VARleft))
+   |        VAR ID COLON ID ASSIGN exp                         (makeVarDec(S.symbol(ID1),
+									   SOME (S.symbol(ID2),ID2left),
+									   exp,
+									   VARleft))
+
+(* Function declarations *)
+fundecl   : FUNCTION ID LPAREN tyfields RPAREN EQ exp          (makeFundecl(S.symbol(ID),
+									    tyfields,
+									    NONE,
+									    exp,
+									    FUNCTIONleft)) (*Rule 55*)
+
+   |        FUNCTION ID LPAREN tyfields RPAREN COLON ID EQ exp (makeFundecl(S.symbol(ID1),
+									    tyfields,
+									    SOME (S.symbol(ID2),ID2left),
+									    exp,
+									    FUNCTIONleft))
+
+fundecls  : fundecl                                            ([fundecl])
+   |        fundecls fundecl                                   (fundecl :: fundecls)
+
+
+(* Location values *)
+lvalue    : ID lvalue_p                                        (makeLvaluePartSpec(A.SimpleVar(S.symbol(ID),IDleft),
+										   IDleft,
+										   lvalue_p))
+
+
+lvalue_p  :                                                    ([]) (*Rule 55*)
+   |	    DOT ID lvalue_p                                    (Field(S.symbol(ID))::lvalue_p)
+   |        LBRACK exp RBRACK lvalue_p                         (Subscript(exp)::lvalue_p)
